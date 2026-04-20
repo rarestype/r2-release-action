@@ -15,7 +15,7 @@ inputs:
         type: string
     archive:
         description: 'The name of the resulting tar file'
-        required: false
+        required: true
         type: string
     project:
         description: 'Version namespace for the archive'
