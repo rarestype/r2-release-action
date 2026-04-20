@@ -1,0 +1,77 @@
+name: Rarest release
+description: ''
+branding:
+    icon: award
+    color: purple
+
+inputs:
+    from:
+        description: 'The root directory for the archive (contents will be relative to this)'
+        default: '.build/release'
+        type: string
+    include:
+        description: 'Newline-separated list of files or directories to include'
+        required: true
+        type: string
+    archive:
+        description: 'The name of the resulting tar file'
+        required: false
+        type: string
+    project:
+        description: 'Version namespace for the archive'
+        required: true
+        type: string
+    version:
+        description: 'Version identifier for the archive'
+        required: true
+        type: string
+    bucket:
+        description: 'The name of the R2 bucket'
+        required: true
+        type: string
+
+runs:
+    using: "composite"
+    steps:
+        -   name: Check R2 configuration
+            shell: bash
+            run: |
+                if [ ! -v R2_ENDPOINT ]; then
+                    echo "R2_ENDPOINT is not set"
+                    exit 1
+                fi
+
+        -   name: Upload artifacts
+            shell: bash
+            env:
+                ARCHIVE: ${{ inputs.archive }}
+                INCLUDE: ${{ inputs.include }}
+                INCLUDE_DIRECTORY: ${{ inputs.from }}
+
+                DEPLOY_VERSION: ${{ inputs.version }}
+                DEPLOY_PROJECT: ${{ inputs.project }}
+                R2_BUCKET: ${{ inputs.bucket }}
+
+            run: |
+                INCLUDE_PATHS_FILE=$(mktemp "${{ runner.temp }}/tar_list.XXXXXX")
+                ARCHIVE_FILE=$(mktemp "${{ runner.temp }}/archive.XXXXXX")
+
+                trap 'rm -f "$INCLUDE_PATHS_FILE" "$ARCHIVE_FILE"' EXIT
+
+                # Use printf to write the variable to the file.
+                # "%s" tells printf to treat the variable as a literal string.
+                # This is safer than echo, which might interpret flags like -n.
+                printf "%s\n" "$INCLUDE" > "$INCLUDE_PATHS_FILE"
+
+                echo "Creating ${ARCHIVE}..."
+                tar -cf "$ARCHIVE_FILE" \
+                    -I 'gzip -9' \
+                    -C "$INCLUDE_DIRECTORY" \
+                    -T "$INCLUDE_PATHS_FILE"
+
+                for version in "$DEPLOY_VERSION" "latest"; do
+                    variant="${version}/${RUNNER_OS}-$(uname -m)"
+                    aws s3 cp "$ARCHIVE_FILE" \
+                        "s3://${R2_BUCKET}/${DEPLOY_PROJECT}/${variant}/${ARCHIVE}" \
+                        --endpoint "$R2_ENDPOINT"
+                done
