@@ -14,12 +14,12 @@ inputs:
         required: true
         type: string
     archive:
-        description: 'The name of the resulting tar file'
+        description: 'The name of the resulting tar.gz file, including file suffix if desired'
         required: true
         type: string
     project:
-        description: 'Version namespace for the archive'
-        required: true
+        description: 'Namespace for the archive, if unset, will default to repo name'
+        required: false
         type: string
     version:
         description: 'Version identifier for the archive'
@@ -53,6 +53,11 @@ runs:
                 R2_BUCKET: ${{ inputs.bucket }}
 
             run: |
+                if [[ -z "$DEPLOY_PROJECT" ]]; then
+                    DEPLOY_PROJECT="${{ github.repository }}"
+                    DEPLOY_PROJECT="${DEPLOY_PROJECT#*/}"
+                fi
+
                 INCLUDE_PATHS_FILE=$(mktemp "${{ runner.temp }}/tar_list.XXXXXX")
                 ARCHIVE_FILE=$(mktemp "${{ runner.temp }}/archive.XXXXXX")
 
