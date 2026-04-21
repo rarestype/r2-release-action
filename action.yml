@@ -10,11 +10,15 @@ inputs:
         default: '.build/release'
         type: string
     include:
-        description: 'Newline-separated list of files or directories to include'
+        description: |
+            Newline-separated list of files or directories to include, with paths relative to \
+            the `from` parameter
         required: true
         type: string
     archive:
-        description: 'The name of the resulting tar.gz file, including file suffix if desired'
+        description: |
+            The name of the resulting tar.gz or zip file, including file suffix if desired. \
+            To request zip format, the zip suffix is required.
         required: true
         type: string
     project:
@@ -69,10 +73,24 @@ runs:
                 printf "%s\n" "$INCLUDE" > "$INCLUDE_PATHS_FILE"
 
                 echo "Creating ${ARCHIVE}..."
-                tar -cf "$ARCHIVE_FILE" \
-                    -I 'gzip -9' \
-                    -C "$INCLUDE_DIRECTORY" \
-                    -T "$INCLUDE_PATHS_FILE"
+
+                if [[ "$ARCHIVE" == *".zip" ]]; then
+                    CONTENT_TYPE='application/zip'
+                    (
+                        cd "$INCLUDE_DIRECTORY"
+                        zip -9 -rq -@ "$ARCHIVE_FILE" < "$INCLUDE_PATHS_FILE"
+                    )
+                else
+                    CONTENT_TYPE='application/gzip'
+                    tar -cf "$ARCHIVE_FILE" \
+                        -I 'gzip -9' \
+                        -C "$INCLUDE_DIRECTORY" \
+                        -T "$INCLUDE_PATHS_FILE"
+
+                    if [[ "$ARCHIVE" != *".tar.gz" ]]; then
+                        echo "warning: ${ARCHIVE} has no file extension, using tar.gz format"
+                    fi
+                fi
 
                 for version in "$DEPLOY_VERSION" "latest"; do
                     variant="${version}/${RUNNER_OS}-$(uname -m)"
@@ -86,5 +104,6 @@ runs:
                     aws s3 cp "$ARCHIVE_FILE" \
                         "s3://${R2_BUCKET}/${DEPLOY_PROJECT}/${variant}/${ARCHIVE}" \
                         --endpoint "$R2_ENDPOINT" \
-                        --cache-control "public, max-age=${cache_ttl}"
+                        --cache-control "public, max-age=${cache_ttl}" \
+                        --content-type "$CONTENT_TYPE"
                 done
