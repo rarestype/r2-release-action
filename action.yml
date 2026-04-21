@@ -62,10 +62,11 @@ runs:
                     DEPLOY_PROJECT="${DEPLOY_PROJECT#*/}"
                 fi
 
-                INCLUDE_PATHS_FILE=$(mktemp "${{ runner.temp }}/tar_list.XXXXXX")
-                ARCHIVE_FILE=$(mktemp "${{ runner.temp }}/archive.XXXXXX")
+                WORKSPACE=$(mktemp -d "${{ runner.temp }}/workspace.XXXXXX")
 
-                trap 'rm -f "$INCLUDE_PATHS_FILE" "$ARCHIVE_FILE"' EXIT
+                trap 'rm -rf "$WORKSPACE"' EXIT
+
+                INCLUDE_PATHS_FILE="${WORKSPACE}/include_paths"
 
                 # Use printf to write the variable to the file.
                 # "%s" tells printf to treat the variable as a literal string.
@@ -75,13 +76,19 @@ runs:
                 echo "Creating ${ARCHIVE}..."
 
                 if [[ "$ARCHIVE" == *".zip" ]]; then
+                    # zip always appends '.zip' if not already present, so including it in
+                    # the generated file’s name makes things simpler
+
                     CONTENT_TYPE='application/zip'
+                    ARCHIVE_FILE="${WORKSPACE}/archive.zip"
                     (
                         cd "$INCLUDE_DIRECTORY"
-                        zip -9 -rq -@ "$ARCHIVE_FILE" < "$INCLUDE_PATHS_FILE"
+                        zip -9 -yrq -@ "$ARCHIVE_FILE" < "$INCLUDE_PATHS_FILE"
                     )
                 else
                     CONTENT_TYPE='application/gzip'
+                    ARCHIVE_FILE="${WORKSPACE}/archive.tar.gz"
+
                     tar -cf "$ARCHIVE_FILE" \
                         -I 'gzip -9' \
                         -C "$INCLUDE_DIRECTORY" \
