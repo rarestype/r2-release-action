@@ -10,7 +10,7 @@ store versioned binaries in cloudflare r2
 
 ```yaml
 -   name: 💝 Deploy prebuilts 💝
-    uses: rarestype/r2-release-action@master
+    uses: rarestype/r2-release-action@v1
     with:
         from: .build/release
         include: |
