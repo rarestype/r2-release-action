@@ -10,11 +10,15 @@ inputs:
         default: '.build/release'
         type: string
     include:
-        description: 'Newline-separated list of files or directories to include'
+        description: >
+            Newline-separated list of files or directories to include, with paths relative to \
+            the `from` parameter
         required: true
         type: string
     archive:
-        description: 'The name of the resulting tar.gz file, including file suffix if desired'
+        description: >
+            The name of the resulting tar.gz or zip file, including file suffix if desired. \
+            To request zip format, the zip suffix is required.
         required: true
         type: string
     project:
@@ -58,21 +62,42 @@ runs:
                     DEPLOY_PROJECT="${DEPLOY_PROJECT#*/}"
                 fi
 
-                INCLUDE_PATHS_FILE=$(mktemp "${{ runner.temp }}/tar_list.XXXXXX")
-                ARCHIVE_FILE=$(mktemp "${{ runner.temp }}/archive.XXXXXX")
+                WORKSPACE=$(mktemp -d "${{ runner.temp }}/workspace.XXXXXX")
 
-                trap 'rm -f "$INCLUDE_PATHS_FILE" "$ARCHIVE_FILE"' EXIT
+                trap 'rm -rf "$WORKSPACE"' EXIT
+
+                INCLUDE_PATHS_FILE="${WORKSPACE}/include_paths"
 
                 # Use printf to write the variable to the file.
                 # "%s" tells printf to treat the variable as a literal string.
                 # This is safer than echo, which might interpret flags like -n.
-                printf "%s\n" "$INCLUDE" > "$INCLUDE_PATHS_FILE"
+                printf "%s\n" "$INCLUDE" | grep -v '^[[:space:]]*$' > "$INCLUDE_PATHS_FILE"
 
                 echo "Creating ${ARCHIVE}..."
-                tar -cf "$ARCHIVE_FILE" \
-                    -I 'gzip -9' \
-                    -C "$INCLUDE_DIRECTORY" \
-                    -T "$INCLUDE_PATHS_FILE"
+
+                if [[ "$ARCHIVE" == *".zip" ]]; then
+                    # zip always appends '.zip' if not already present, so including it in
+                    # the generated file’s name makes things simpler
+
+                    CONTENT_TYPE='application/zip'
+                    ARCHIVE_FILE="${WORKSPACE}/archive.zip"
+                    (
+                        cd "$INCLUDE_DIRECTORY"
+                        zip -9 -yrq -@ "$ARCHIVE_FILE" < "$INCLUDE_PATHS_FILE"
+                    )
+                else
+                    CONTENT_TYPE='application/gzip'
+                    ARCHIVE_FILE="${WORKSPACE}/archive.tar.gz"
+
+                    tar -cf "$ARCHIVE_FILE" \
+                        -I 'gzip -9' \
+                        -C "$INCLUDE_DIRECTORY" \
+                        -T "$INCLUDE_PATHS_FILE"
+
+                    if [[ "$ARCHIVE" != *".tar.gz" ]]; then
+                        echo "warning: ${ARCHIVE} has no file extension, using tar.gz format"
+                    fi
+                fi
 
                 for version in "$DEPLOY_VERSION" "latest"; do
                     variant="${version}/${RUNNER_OS}-$(uname -m)"
@@ -86,5 +111,6 @@ runs:
                     aws s3 cp "$ARCHIVE_FILE" \
                         "s3://${R2_BUCKET}/${DEPLOY_PROJECT}/${variant}/${ARCHIVE}" \
                         --endpoint "$R2_ENDPOINT" \
-                        --cache-control "public, max-age=${cache_ttl}"
+                        --cache-control "public, max-age=${cache_ttl}" \
+                        --content-type "$CONTENT_TYPE"
                 done
