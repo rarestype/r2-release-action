@@ -86,5 +86,5 @@ runs:
                     aws s3 cp "$ARCHIVE_FILE" \
                         "s3://${R2_BUCKET}/${DEPLOY_PROJECT}/${variant}/${ARCHIVE}" \
                         --endpoint "$R2_ENDPOINT" \
-                        --cache-control "max-age=${cache_ttl}"
+                        --cache-control "public, max-age=${cache_ttl}"
                 done
