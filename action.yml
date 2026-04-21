@@ -1,5 +1,5 @@
 name: Rarest release
-description: ''
+description: 'store versioned binaries in cloudflare r2'
 branding:
     icon: award
     color: purple
