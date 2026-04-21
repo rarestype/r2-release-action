@@ -10,13 +10,13 @@ inputs:
         default: '.build/release'
         type: string
     include:
-        description: |
+        description: >
             Newline-separated list of files or directories to include, with paths relative to \
             the `from` parameter
         required: true
         type: string
     archive:
-        description: |
+        description: >
             The name of the resulting tar.gz or zip file, including file suffix if desired. \
             To request zip format, the zip suffix is required.
         required: true
@@ -71,7 +71,7 @@ runs:
                 # Use printf to write the variable to the file.
                 # "%s" tells printf to treat the variable as a literal string.
                 # This is safer than echo, which might interpret flags like -n.
-                printf "%s\n" "$INCLUDE" > "$INCLUDE_PATHS_FILE"
+                printf "%s\n" "$INCLUDE" | grep -v '^[[:space:]]*$' > "$INCLUDE_PATHS_FILE"
 
                 echo "Creating ${ARCHIVE}..."
 
