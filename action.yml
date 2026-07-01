@@ -6,31 +6,47 @@ branding:
 
 inputs:
     from:
-        description: 'The root directory for the archive (contents will be relative to this)'
+        description: >
+            The root directory for the archive (contents will be relative to this)
         default: '.build/release'
         type: string
+
+    each:
+        description: >
+            Opt-in to compress and upload each included path separately.
+            Valid values are 'zip' or 'tar.gz'.
+        required: false
+        type: string
+
     include:
         description: >
-            Newline-separated list of files or directories to include, with paths relative to \
+            Newline-separated list of files or directories to include, with paths relative to
             the `from` parameter
         required: true
         type: string
+
     archive:
         description: >
-            The name of the resulting tar.gz or zip file, including file suffix if desired. \
+            The name of the resulting tar.gz or zip file, including file suffix if desired.
             To request zip format, the zip suffix is required.
-        required: true
-        type: string
-    project:
-        description: 'Namespace for the archive, if unset, will default to repo name'
         required: false
         type: string
+
+    project:
+        description: >
+            Namespace for the archive, if unset, will default to repo name
+        required: false
+        type: string
+
     version:
-        description: 'Version identifier for the archive'
+        description: >
+            Version identifier for the archive
         required: true
         type: string
+
     bucket:
-        description: 'The name of the R2 bucket'
+        description: >
+            The name of the R2 bucket
         required: true
         type: string
 
@@ -49,6 +65,7 @@ runs:
             shell: bash
             env:
                 ARCHIVE: ${{ inputs.archive }}
+                EACH: ${{ inputs.each }}
                 INCLUDE: ${{ inputs.include }}
                 INCLUDE_DIRECTORY: ${{ inputs.from }}
 
@@ -73,44 +90,93 @@ runs:
                 # This is safer than echo, which might interpret flags like -n.
                 printf "%s\n" "$INCLUDE" | grep -v '^[[:space:]]*$' > "$INCLUDE_PATHS_FILE"
 
-                echo "Creating ${ARCHIVE}..."
+                # Helper function to handle the S3 upload loop
+                upload_artifact() {
+                    local archive_file="$1"
+                    local archive_name="$2"
+                    local content_type="$3"
 
-                if [[ "$ARCHIVE" == *".zip" ]]; then
-                    # zip always appends '.zip' if not already present, so including it in
-                    # the generated file’s name makes things simpler
+                    for version in "$DEPLOY_VERSION" "latest"; do
+                        local variant="${version}/${RUNNER_OS}-$(uname -m)"
+                        local cache_ttl
 
-                    CONTENT_TYPE='application/zip'
-                    ARCHIVE_FILE="${WORKSPACE}/archive.zip"
-                    (
-                        cd "$INCLUDE_DIRECTORY"
-                        zip -9 -yrq -@ "$ARCHIVE_FILE" < "$INCLUDE_PATHS_FILE"
-                    )
+                        if [[ "$version" == "latest" ]]; then
+                            cache_ttl=86400
+                        else
+                            cache_ttl=604800
+                        fi
+
+                        aws s3 cp "$archive_file" \
+                            "s3://${R2_BUCKET}/${DEPLOY_PROJECT}/${variant}/${archive_name}" \
+                            --endpoint "$R2_ENDPOINT" \
+                            --cache-control "public, max-age=${cache_ttl}" \
+                            --content-type "$content_type"
+                    done
+                }
+
+                if [[ -n "$EACH" ]]; then
+                    echo "Compressing and uploading each item separately as ${EACH}..."
+
+                    while IFS= read -r path; do
+                        [ -z "$path" ] && continue
+                        base_name=$(basename "$path")
+
+                        if [[ "$EACH" == 'zip' ]]; then
+                            ARCHIVE_FILE="${WORKSPACE}/${base_name}.zip"
+                            CONTENT_TYPE='application/zip'
+                            (
+                                cd "$INCLUDE_DIRECTORY"
+                                zip -9 -yrq "$ARCHIVE_FILE" "$path"
+                            )
+                            upload_artifact "$ARCHIVE_FILE" "${base_name}.zip" "$CONTENT_TYPE"
+                        elif [[ "$EACH" == 'tar.gz' ]]; then
+                            ARCHIVE_FILE="${WORKSPACE}/${base_name}.tar.gz"
+                            CONTENT_TYPE='application/gzip'
+                            tar -cf "$ARCHIVE_FILE" \
+                                -I 'gzip -9' \
+                                -C "$INCLUDE_DIRECTORY" \
+                                "$path"
+
+                            upload_artifact \
+                                "$ARCHIVE_FILE" \
+                                "${base_name}.tar.gz" \
+                                "$CONTENT_TYPE"
+                        else
+                            echo "Error: 'each' must be 'zip' or 'tar.gz'"
+                            exit 1
+                        fi
+                    done < "$INCLUDE_PATHS_FILE"
                 else
-                    CONTENT_TYPE='application/gzip'
-                    ARCHIVE_FILE="${WORKSPACE}/archive.tar.gz"
-
-                    tar -cf "$ARCHIVE_FILE" \
-                        -I 'gzip -9' \
-                        -C "$INCLUDE_DIRECTORY" \
-                        -T "$INCLUDE_PATHS_FILE"
-
-                    if [[ "$ARCHIVE" != *".tar.gz" ]]; then
-                        echo "warning: ${ARCHIVE} has no file extension, using tar.gz format"
+                    if [[ -z "$ARCHIVE" ]]; then
+                        echo "Error: Either 'archive' or 'each' must be provided."
+                        exit 1
                     fi
-                fi
 
-                for version in "$DEPLOY_VERSION" "latest"; do
-                    variant="${version}/${RUNNER_OS}-$(uname -m)"
+                    echo "Creating single archive ${ARCHIVE}..."
 
-                    if [[ "$version" == "latest" ]]; then
-                        cache_ttl=86400
+                    if [[ "$ARCHIVE" == *".zip" ]]; then
+                        # zip always appends '.zip' if not already present, so including it in
+                        # the generated file’s name makes things simpler
+
+                        CONTENT_TYPE='application/zip'
+                        ARCHIVE_FILE="${WORKSPACE}/archive.zip"
+                        (
+                            cd "$INCLUDE_DIRECTORY"
+                            zip -9 -yrq -@ "$ARCHIVE_FILE" < "$INCLUDE_PATHS_FILE"
+                        )
                     else
-                        cache_ttl=604800
+                        CONTENT_TYPE='application/gzip'
+                        ARCHIVE_FILE="${WORKSPACE}/archive.tar.gz"
+
+                        tar -cf "$ARCHIVE_FILE" \
+                            -I 'gzip -9' \
+                            -C "$INCLUDE_DIRECTORY" \
+                            -T "$INCLUDE_PATHS_FILE"
+
+                        if [[ "$ARCHIVE" != *".tar.gz" ]]; then
+                            echo "warning: ${ARCHIVE} has no file extension, using tar.gz format"
+                        fi
                     fi
 
-                    aws s3 cp "$ARCHIVE_FILE" \
-                        "s3://${R2_BUCKET}/${DEPLOY_PROJECT}/${variant}/${ARCHIVE}" \
-                        --endpoint "$R2_ENDPOINT" \
-                        --cache-control "public, max-age=${cache_ttl}" \
-                        --content-type "$CONTENT_TYPE"
-                done
+                    upload_artifact "$ARCHIVE_FILE" "$ARCHIVE" "$CONTENT_TYPE"
+                fi
